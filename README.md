@@ -1,186 +1,602 @@
-# Korea Equity Demand Elasticity
+# Korea Stock Supply-Demand Elasticity Strategy
 
-한국 주식시장에서 개별 종목의 **수요곡선 기울기**를 추정하고,
-그것이 유통주식 희소성에 따라 어떻게 달라지는지 검증하는 연구.
+## 1. Project Overview
 
-> **상태**: 엔진 검증 완료 · 실데이터 수집 중
-> **결론**: 아직 없음. 결과가 나오면 `docs/04_results.md`에 기각 여부와 함께 기록한다.
+이 프로젝트의 목적은 **KOSDAQ에서 유통물량이 제한된 종목에 수요가 집중될 때 발생하는 급등 가능성**을 정량적으로 검증하고, 이를 실제 매매 가능한 규칙으로 발전시키는 것이다.
 
----
+핵심 가설:
 
-## 1. 무엇을 하는가
+> **Supply Tightness × Demand Pressure × Sell Pressure × Market State → 급등 확률 상승**
 
-"이 종목의 적정주가는 얼마인가"를 묻지 않는다.
-대신 **"이 종목은 단위 수요당 얼마나 크게 움직이는가"**를 묻는다.
-
-```
-%ΔP  ≈  (1/ζ) · ΔShares / FreeFloat
-```
-
-핵심 재프레이밍: **유통물량 희소성은 밸류에이션 요인이 아니라 증폭기(amplifier)다.**
-
-Shleifer(1986)의 S&P500 편입 연구와 Gabaix–Koijen의 Inelastic Markets
-Hypothesis를 한국 시장에 적용하되, 한국 고유의 제도 제약을 명시적으로 반영한다.
-
-## 2. 왜 지수 편입을 쓰는가 — 식별 전략
-
-수요 충격을 주문흐름에서 추정하면 가격과 동시결정되어 인과 식별이 안 된다.
-
-지수 편입/편출은 다르다. 패시브 자금은 기업가치가 좋아져서 사는 게 아니라
-**지수를 복제해야 해서** 산다. 펀더멘털과 직교하는 외생적 수요 충격이다.
-
-## 3. 검정 가설
-
-| | 내용 | 기준 |
-|---|---|---|
-| **H1** | 수요곡선 우하향 | `β₀ > 0` |
-| **H2** | 유통비율이 높을수록 증폭 작음 | `β₁ < 0` ← **핵심** |
-| **H3** | 효과가 영구적인가 일시적인가 | 장기 되돌림 검정 |
-
-```
-CAR = α + β₀·Shock + β₁·(Shock × FF_ratio) + β₂·(Shock × logADV) + γ'X + ε
-```
-
-**가설과 실패 기준은 결과 확인 전에 커밋되었다** → [`docs/01_hypothesis.md`](docs/01_hypothesis.md)
-
-특히 사전등록 기각조건 1: **H2가 기각되면 Track 2를 진행하지 않는다.**
-
-## 4. 이 리포에서 가장 중요한 문서
-
-### → [`docs/02_data_constraints.md`](docs/02_data_constraints.md)
-
-한국 시장에서 이런 연구를 할 때 **결과를 무효화하는 제도 제약**을 정리했다.
-백테스트 수치보다 먼저 읽어야 한다.
-
-**① 공매도 데이터의 구조적 단절**
-소형주(코스닥150·코스피200 외)는 2020.03 ~ 2025.03 약 5년간 공매도가
-제도적으로 불가능했다. 잔고가 낮은 게 아니라 **존재할 수 없었다.**
-→ 스퀴즈 모델의 유효 표본은 약 17개월. 매매 전략에서 제외했다.
-
-**② 예측 대상이 예측을 무효화한다**
-급등 → 투자경고 지정 → 신용융자 매수 금지.
-즉 신용잔고는 급등을 예측하는 게 아니라 급등 이후 기계적으로 차단된다.
-통제하지 않으면 모델이 역인과를 학습한다.
-
-**③ 가장 정확한 예측이 가장 체결 불가능하다**
-상한가(±30%) 도달 시 매도 호가가 소멸한다. VI·거래정지도 마찬가지.
-"익일 +30%"를 맞춰도 체결되지 않으면 수익은 0이다.
-
-**④ 벤치마크 오류**
-관심 유니버스(얇은 유통물량·고변동성·고회전율)는 복권형 주식 정의와
-거의 일치하며, 이 그룹은 평균적으로 음(-)의 초과수익이 보고된다.
-→ 성과 기준은 절대수익이 아니라 **동일 특성 바스켓**이어야 한다.
-
-**⑤ KRX 회원제 전환(2025-12)으로 데이터 접근 경로가 바뀌었다**
-pykrx가 빈 응답을 받아 전면 장애가 발생한다. 원인과 대응을 문서화했다.
-
-## 5. 엔진 검증
-
-실데이터 적용 전, **정답을 아는 합성 데이터**로 엔진 정확성을 확인했다.
-
-```
-$ bash scripts/run_tests.sh
-
-[이벤트 스터디 엔진]
-  검정 1 — 알려진 계수 회수
-    beta0: +0.524  (정답 +0.50)
-    beta1: -0.841  (정답 -0.80), p=0.0000
-  검정 2 — 강건성 (초과수익률 산출 방식 변경)
-    market_model -0.841 / market_adjusted -0.796  → 부호 일치
-  검정 3 — 위양성 통제 (효과 없는 데이터 20회)
-    위양성률: 1/20 = 5.0%  (기대 ~5%)
-
-[지수 이벤트 스키마]
-  날짜 규칙 2개 사례 검증 (2026-06, 2025-12)
-  잘못된 입력 4종 거부 확인
-  품질 감사 플래그 작동 확인
-```
-
-**검정 3이 핵심이다.** 효과가 0인 데이터에서 가짜 유의성을 만들지 않으므로,
-실데이터에서 유의한 결과가 나오면 신뢰할 수 있다.
-
-## 6. 설계 원칙
-
-- **Point-in-Time 엄수** — 모든 피처를 실제 공표 시점 기준으로 래깅
-- **추정구간 / 이벤트구간 분리** — 시장모형 추정에 이벤트 기간 미포함
-- **클러스터 표준오차** — 같은 날 발표 이벤트는 독립이 아니다
-- **조용한 실패 금지** — 빈 결과를 정상으로 취급하지 않는다.
-  빈 표본으로 회귀가 돌면 "결과 없음"이 "효과 없음"으로 오독된다
-- **추측 금지** — 종목코드·날짜·API 스키마를 기억이나 추정으로 채우지 않는다.
-  확인되지 않은 것은 `verification` 등급으로 명시한다
-- **백테스트 불가능한 피처는 모델에서 제외** — 체결강도는 진입 타이밍 필터로만
-- **생존편향 통제** — 상장폐지 종목 포함
-
-## 7. 구조
-
-```
-scripts/check_access.py       데이터 소스 진단 (여기서 시작)
-scripts/resolve_tickers.py    종목명 -> 종목코드
-scripts/run_tests.sh          전체 검증
-
-src/analysis/event_study.py   CAR 계산 + 횡단면 회귀 (클러스터 SE)
-src/events/index_events.py    이벤트 스키마 + 날짜 규칙 + 품질 감사
-
-docs/01_hypothesis.md         사전등록 (실패 기준 포함)
-docs/02_data_constraints.md   제도 제약 ★
-docs/03_event_collection.md   수집 절차
-
-data/events/                  수집한 이벤트 (재현성의 핵심, Git 추적)
-```
-
-## 8. 시작하기
-
-```bash
-pip install -r requirements.txt
-
-# 1. 어떤 데이터 소스가 동작하는지 확정
-python3 scripts/check_access.py
-
-# 2. 엔진 검증
-bash scripts/run_tests.sh
-
-# 3. 이벤트 수집 (docs/03_event_collection.md 참조)
-python3 scripts/resolve_tickers.py --demo
-```
-
-환경변수 (해당하는 것만):
-
-```bash
-export KRX_ID=... KRX_PW=...          # pykrx (구 계정 체계 전제)
-export KRX_OPENAPI_KEY=...            # 공식 KRX OpenAPI
-export TOSS_CLIENT_ID=... TOSS_CLIENT_SECRET=...
-export DART_API_KEY=...
-```
-
-## 9. 다음 단계
-
-- [ ] 지수 편입/편출 이벤트 수집 (2020~2026, 6월·12월)
-- [ ] FreeFloat 산출 (KRX 유동주식수 vs DART 지분공시 비교)
-- [ ] 실데이터 H1/H2 검정 → `docs/04_results.md`
-- [ ] **H2 기각 시 Track 2 중단** (사전등록 기각조건 1)
-- [ ] H2 지지 시: DART 기반 잠재유통물량(Overhang) 데이터셋 구축
-
-### Track 2 예고 — 오버행 판별
-
-대부분의 "품절주"는 함정이다. FreeFloat이 3%로 극단적으로 얇아도,
-미상환 CB가 발행주식수의 40%에 해당하는 잠재주식을 깔고 있으면
-희소한 게 아니라 **잠복 공급이 대기 중**인 것이다.
-
-```
-Overhang = (CB전환가능주식 + BW행사가능주식 + 미해제 보호예수) / FreeFloat
-
-진짜 품절주 = 낮은 FF_ratio  AND  낮은 Overhang
-함정        = 낮은 FF_ratio  AND  높은 Overhang
-```
-
-CB 전환가액은 주가 하락 시 리픽싱되어 잠재 물량이 자동으로 불어난다.
-따라서 Overhang은 주가의 함수이며, 리픽싱 하한까지 파싱해야 정확하다.
-pykrx로 산출 불가능하며 DART 원문 파싱을 요구한다.
+초기 목표는 **향후 20거래일 내 +30% 이상 상승할 종목을 사전에 탐지**하는 것이었으며, 단순 예측모델이 아니라 실제 체결, 비용, 포트폴리오 제약까지 포함한 실행 가능한 전략을 만드는 것을 목표로 했다.
 
 ---
 
-## 면책
+## 2. Research Universe / PIT Data
 
-본 저장소는 연구 목적이며 투자 자문이 아니다.
-통계적 관계의 존재가 실현 가능한 수익을 의미하지 않는다.
-거래비용·체결제약 반영 전 성과 수치는 신뢰할 수 없다.
+- 연구 시작: 2025-01-01
+- Universe: KOSDAQ PIT universe
+- MSCI 편입 등 외생적 index-provider free float 효과는 제외
+- 주요 소스: KIS Open API, OpenDART, FinanceDataReader, KRX/pykrxauth
+
+핵심 core 결과:
+- Requested tickers: 1,723
+- Complete market + DART: 1,712
+- Rows: 657,370
+- `target_20d_30pct = 1`: 89,401
+- 독립 +30% surge event: 8,188
+
+주요 파일:
+
+```text
+data/pit_kosdaq/core/processed/stock_master_model.parquet
+data/pit_kosdaq/core/processed/stock_master_model_demand_complete.parquet
+data/pit_kosdaq/universe/membership_daily.parquet
+data/pit_kosdaq/universe/pit_pipeline_universe.csv
+```
+
+---
+
+## 3. Initial Target
+
+기본 target:
+
+> 신호일 이후 20거래일 안에 주가가 +30% 이상 상승
+
+독립 급등 event는 cooldown을 적용하여 동일 상승구간의 중복 계산을 줄였다.
+
+---
+
+## 4. Supply Tightness Hypothesis
+
+초기 핵심 신호:
+
+```text
+free_float_market_cap 하위 20%
+AND
+float_turnover_1d 상위 20%
+```
+
+전체 PIT:
+- overall target rate ≈ 14.35%
+- signal target rate ≈ 25.36%
+- RR vs overall ≈ 1.77x
+
+따라서 **작은 유통물량 + 높은 turnover** 조합은 급등 확률을 높였다.
+
+하지만 신호 내부에서는 turnover가 가장 극단적으로 높은 종목의 성과가 오히려 악화됐다.
+
+---
+
+## 5. Final C5 Signal
+
+C5 조건:
+
+1. `free_float_market_cap` 전체시장 하위 20%
+2. `float_turnover_1d` 전체시장 상위 20%
+3. Base Signal 안에서 turnover 상대순위 Q1~Q2
+4. Base Signal 안에서 free-float mcap Q1~Q2
+5. 당일 수익률 최상위 20% (`ret1 Q5`) 제외
+
+해석:
+
+> **작은 유통물량 + 충분한 turnover는 필요하지만, 이미 극단적으로 과열된 종목은 제외**
+
+C5 내부 우선순위:
+
+```text
+priority_score = float_signal_pct + turn_signal_pct
+```
+
+낮을수록 우선순위가 높다.
+
+---
+
+## 6. Demand Pressure
+
+검증:
+- Turnover acceleration
+- Program net-buy level
+- Program net-buy acceleration
+- Execution strength
+- Execution-strength acceleration
+
+결론:
+
+| 변수 | 결론 |
+|---|---|
+| Turnover acceleration | 부분 지지 |
+| Program net-buy acceleration | 부분 지지 |
+| Program net-buy level | 불안정 |
+| Execution-strength acceleration | 기각 |
+| Demand hard filter | 기각 |
+
+Demand 변수는 현재 hard filter에 쓰지 않는다. Program acceleration은 향후 ranking challenger로만 유지한다.
+
+---
+
+## 7. Sell Pressure / Short
+
+검증:
+- Credit balance
+- Securities lending balance
+- Short-sale flow
+- Lending-to-float
+- Lending DTC proxy
+- KRX reported short balance
+- True DTC
+- Short build-up
+
+핵심 결론:
+- Lending overhang: ✅ penalty 후보
+- KRX reported short balance presence: ✅ penalty 후보
+- Credit: ⚪ 불확실
+- Lending-DTC proxy: ❌
+- True DTC squeeze: ❌
+- High SI × DTC squeeze: ❌
+- Short build-up squeeze: ❌
+
+즉 공매도/대차는 현재 **hard exclusion이 아니라 ranking penalty 후보**다.
+
+---
+
+## 8. Market State
+
+중요한 발견:
+
+> C5는 강한 장보다 **시장 전체가 약한 상태에서 일부 저유통주로 수요가 집중될 때** 더 강했다.
+
+Frozen threshold:
+
+```text
+KOSDAQ 20d return <= +2.1656%
+MA20 breadth      <= 34.9398%
+60d drawdown      <= -3.4201%
+```
+
+3개 중 2개 이상 충족:
+
+```text
+MARKET_WEAK = True
+```
+
+현재 채택:
+
+```text
+C5 + Market Weakness 2-of-3
+```
+
+---
+
+## 9. Entry Timing
+
+검증:
+- t+1 Open
+- Gap filter
+- 09:05
+- 09:05 NO_CHASE
+- 09:10
+- 09:10 NO_CHASE
+
+09:05 NO_CHASE는 이벤트 단위에서 일부 개선이 있었지만, 실제 포트폴리오에서는 t+1 Open보다 일관되게 우수하지 않았다.
+
+최종:
+
+```text
+Entry = t+1 Open
+```
+
+실전:
+
+```text
+신호일 t 장 마감 후 후보 확정
+→ t+1 08:30~09:00 동시호가 주문
+→ 09:00 시가 체결 시도
+→ 미체결 물량 추격매수하지 않음
+```
+
+---
+
+## 10. Exit Optimization
+
+검증 grid:
+
+```text
+TP:   +20%, +30%, +40%, +50%
+SL:   -10%, -15%, -20%
+Hold: 10, 20, 30 trading days
+```
+
+최종:
+
+```text
+Take Profit: +30%
+Stop Loss:   -15%
+Max Hold:    20 trading days
+```
+
+동일 bar에서 TP/SL 모두 발생 시 보수적으로 SL 우선. Gap-down이 stop 아래에서 시작하면 실제 시가 청산.
+
+---
+
+## 11. Portfolio Construction
+
+실제 계좌 조건:
+- 동일 종목 중복보유 금지
+- 현금 100% 시작
+- 미사용 슬롯은 현금 유지
+- 최대 동시보유 3 / 5 / 10 테스트
+
+### Main: MARKET + N10
+
+Full:
+- Total Return ≈ +140.8%
+- Annualized ≈ +70.8%
+- MDD ≈ -23.0%
+- Sharpe ≈ 2.17
+- Trades = 222
+
+### Aggressive: MARKET + N3
+
+Full:
+- Total Return ≈ +247.8%
+- Annualized ≈ +113.7%
+- MDD ≈ -23.0%
+- Sharpe ≈ 2.08
+- Trades = 71
+
+최종:
+
+```text
+N10 = Main
+N3  = Aggressive challenger
+```
+
+---
+
+## 12. Execution Robustness
+
+MARKET 후보 1,034건 기준:
+- delayed entry count = 0
+- locked limit-up proxy = 0
+- strict tradable rate = 100%
+
+### N10 Slippage Stress
+
+| Slippage / side | Annualized | MDD | PF |
+|---|---:|---:|---:|
+| 10bp | 70.8% | -23.0% | 1.77 |
+| 30bp | 61.9% | -24.1% | 1.68 |
+| 50bp | 53.4% | -25.1% | 1.59 |
+| 100bp | 34.2% | -27.7% | 1.40 |
+
+전략은 거래비용보다 **liquidity capacity**에 더 민감했다.
+
+---
+
+## 13. Liquidity / Capacity
+
+실전 주문한도:
+
+```text
+order_size = min(account_equity / 10, ADV20 × participation_cap)
+```
+
+기본 research cap:
+
+```text
+participation_cap = 0.5% ADV20
+```
+
+N10 median capacity:
+
+| ADV participation | Approx. account capacity |
+|---|---:|
+| 0.10% | 약 384만원 |
+| 0.25% | 약 960만원 |
+| 0.50% | 약 1,920만원 |
+| 1.00% | 약 3,839만원 |
+
+대략:
+- 100만~1,000만원: 현실적
+- 5,000만원: liquidity 영향 큼
+- 1억원 이상: 확장성 부족
+
+주의: ADV 0.5%는 시장충격 없이 반드시 체결 가능한 절대 기준이 아니라 research execution cap이다.
+
+---
+
+## 14. Current Frozen Main Strategy
+
+### Signal
+
+```text
+C5 Supply Tightness
+```
+
+### Market Regime
+
+3개 중 2개:
+
+```text
+KOSDAQ 20d return <= +2.1656%
+MA20 breadth      <= 34.9398%
+60d drawdown      <= -3.4201%
+```
+
+### Entry
+
+```text
+t close에서 신호 확정
+→ t+1 open
+```
+
+### Portfolio
+
+```text
+Max positions = 10
+Equal sleeves = account equity / 10
+Unused sleeves remain cash
+```
+
+### Exit
+
+```text
+TP       = +30%
+SL       = -15%
+Max Hold = 20 trading days
+```
+
+### Liquidity
+
+```text
+planned_order = min(account_equity / 10, signal_date_ADV20 × ADV cap)
+```
+
+### Short / Lending
+
+```text
+risk flag / future ranking penalty
+```
+
+---
+
+## 15. Date-Based Stock Picker
+
+스크립트:
+
+```text
+scripts/pick_stocks_by_date.py
+```
+
+사용:
+
+```bash
+python scripts/pick_stocks_by_date.py   --date latest   --model data/pit_kosdaq/core/processed/stock_master_model.parquet   --market-state data/pit_kosdaq/analysis/market_state_v1/market_state_daily.parquet   --capital 10000000   --adv-cap 0.005
+```
+
+출력:
+
+```text
+입력 날짜 장 마감 기준 신호
+→ 다음 거래일 09:00 매수 후보
+```
+
+저장:
+
+```text
+data/pit_kosdaq/signals/date_picker/signal_YYYYMMDD.csv
+```
+
+---
+
+## 16. Latest Data Refresh
+
+```bash
+python scripts/refresh_to_latest.py --end latest
+```
+
+흐름:
+
+```text
+latest KOSDAQ trading date
+→ PIT universe update
+→ incremental KIS update
+→ core model rebuild
+→ KOSDAQ index refresh
+→ Market State rebuild
+```
+
+---
+
+## 17. Example: 2026-09-17
+
+후보:
+
+| Rank | Ticker | Name | Close | ADV20 | 0.5% ADV |
+|---|---|---|---:|---:|---:|
+| 1 | 308100 | 형지글로벌 | 283 | 약 1.65억 | 약 82.7만원 |
+| 2 | 373170 | 엠아이큐브솔루션 | 1,904 | 약 9.17억 | 약 458.7만원 |
+| 3 | 290560 | 파라택시스이더리움 | 1,204 | 약 12.49억 | 약 624.4만원 |
+| 4 | 079950 | 인베니아 | 1,380 | 약 2.36억 | 약 117.8만원 |
+
+1,000만원 계좌라면 sleeve는 100만원.
+
+계획상:
+- 형지글로벌: 약 82.7만원
+- 엠아이큐브솔루션: 최대 100만원
+- 파라택시스이더리움: 최대 100만원
+- 인베니아: 최대 100만원
+
+후보가 4개라고 250만원씩 나누지 않는다.
+
+---
+
+## 18. Can Max Hold Be Reduced To 5 Days?
+
+기술적으로 가능하다.
+
+현재:
+
+```text
+Max Hold = 20 trading days
+```
+
+을:
+
+```text
+Max Hold = 5 trading days
+```
+
+로 바꾸는 것은 코드상 어렵지 않다.
+
+하지만 **현재 Main Strategy에 바로 반영하면 안 된다.**
+
+기존 Exit Optimization에서 검증한 Hold는:
+
+```text
+10 / 20 / 30 days
+```
+
+뿐이므로:
+
+```text
+5 days = 미검증
+```
+
+이다.
+
+### 새 challenger 권장
+
+동일한:
+- C5
+- Market Weak
+- t+1 Open
+- TP +30%
+- SL -15%
+- N10
+- 비용조건
+
+을 유지하고 Hold만:
+
+```text
+5 / 10 / 20
+```
+
+으로 비교한다.
+
+봐야 할 항목:
+- CAGR
+- Total Return
+- MDD
+- Sharpe
+- PF
+- Avg trade return
+- Win rate
+- Capital turnover
+- Cash ratio
+- Average holding period
+- 2025 / 2026 연도별 안정성
+
+### 5일 Hold의 잠재 장점
+
+- 자본 회전율 증가
+- 장기간 자금 묶임 감소
+- 신규 신호에 더 자주 대응 가능
+
+### 잠재 단점
+
+- +30% 급등이 6~20일 사이에 나타나는 종목을 조기청산
+- 큰 winner 일부 상실
+- 전략 본래 target(20일 내 +30%)과 horizon mismatch
+
+따라서:
+
+> **5일은 충분히 실험할 가치가 있지만, 재백테스트 후에만 Main으로 채택한다.**
+
+---
+
+## 19. Research Status
+
+| Stage | Status |
+|---|---|
+| PIT Universe | ✅ |
+| Supply Tightness | ✅ |
+| Demand Pressure | ✅ |
+| Sell Pressure | ✅ |
+| True DTC | ✅ |
+| Market State | ✅ |
+| Entry Timing | ✅ |
+| Exit Optimization | ✅ |
+| Portfolio Construction | ✅ |
+| Execution Robustness | ✅ |
+| Date Stock Picker | ✅ |
+| Incremental Refresh | ✅ |
+| 5-day Hold Challenger | ⏳ |
+| Forward / Paper Test | ⏳ |
+
+---
+
+## 20. Research Discipline
+
+2025와 2026 데이터는 이미 여러 차례 연구 의사결정에 사용되었다.
+
+따라서 현재부터는:
+
+```text
+Frozen Main Strategy
+→ 새 데이터 forward test
+→ 실제 fill/slippage 기록
+→ Main vs Challenger 비교
+```
+
+형태로 운영해야 한다.
+
+새 규칙은 과거 수익률이 좋아졌다는 이유만으로 Main에 즉시 합치지 않는다.
+
+---
+
+## 21. Final Summary
+
+현재 구조:
+
+> **Low effective free float**
+>
+> + **moderately strong turnover**
+>
+> + **avoid extreme same-day overheat**
+>
+> + **weak broad market**
+>
+> → concentrated demand into constrained supply
+>
+> → outsized price response
+
+현재 Main Strategy:
+
+```text
+C5
++
+Market Weak 2-of-3
++
+t+1 Open
++
+Max 10 positions
++
+TP +30%
++
+SL -15%
++
+Hold 20 days
++
+Liquidity cap
+```
+
+다음 핵심 검증:
+
+```text
+1. Hold 5-day challenger
+2. Forward / Paper Trading
+3. Actual fill/slippage logging
+4. Short/Lending ranking penalty
+```
